@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """MHP3rd save editor for Monster Hunter Portable 3rd (ULJM-05800).
 
-Edits hunter name, gender, voice and face type in MHP3RD.BIN.
+Edits hunter name, gender, voice and face in MHP3RD.BIN.
 No third-party Python packages are needed; the AES layer uses the system
 `openssl` command.
 
@@ -386,7 +386,7 @@ def copy_appearance(payload: bytes, target_slot: int, source_slot: int) -> bytes
 
 
 def delete_slot(payload: bytes, slot: int) -> bytes:
-    """Clear a character slot exactly like an unused slot (all zeroes)."""
+    """Empty a character slot exactly like an unused slot (all zeroes)."""
     if not read_name(payload, slot):
         raise ValueError(f"slot {slot} is already empty")
     raw = bytearray(payload)
@@ -842,7 +842,7 @@ def copy_look(payload: bytes) -> bytes:
     print()
     print(
         style(
-            f"Delete source slot {source}? This clears that character.",
+            f"Delete source slot {source}? This empties that character.",
             BOLD,
             YELLOW,
         )
@@ -854,7 +854,7 @@ def copy_look(payload: bytes) -> bytes:
         except ValueError as exc:
             error(str(exc))
         else:
-            success(f"Cleared source slot {source}.")
+            success(f"Deleted source slot {source}.")
     return updated
 
 
@@ -1251,7 +1251,7 @@ def run_selftest() -> int:
     else:
         raise AssertionError("invalid skin was accepted")
 
-    # Clearing a source slot must match the game's all-zero empty slot.
+    # Deleting a source slot must match the game's all-zero empty slot.
     deleted = delete_slot(with_source, 2)
     assert read_name(deleted, 2) == ""
     assert read_guild_name(deleted, 2) == ""

@@ -6,7 +6,7 @@ It changes:
 - hunter name (the guild card copy is updated too)
 - gender
 - voice
-- face type
+- face
 - skin tone (hex RGB)
 - copy appearance + voice from another slot
 - automatic backups and a restore picker
@@ -74,9 +74,9 @@ and optionally type a new name. This copies the source's full appearance and
 voice. The target keeps its items, equipment and progress; only the look and
 name change.
 
-After copying, it offers to clear the source slot so the look is not left
-duplicated. This deletion is optional and defaults to No. A cleared slot is
-all zeroes, exactly like an unused slot.
+After copying, it offers to delete the source slot so the look is not left
+duplicated. This deletion is optional and defaults to No. The source slot
+becomes all zeroes, exactly like an unused slot.
 
 ## Safety
 
