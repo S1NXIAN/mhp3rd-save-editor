@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.test-save*
+MHP3RD.BIN
+MHP3RD.BIN.*
+*.tmp
+*.restore-tmp
