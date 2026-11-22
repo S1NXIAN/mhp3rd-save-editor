@@ -72,13 +72,9 @@ _Avoid_: sound, voice type
 The save currently used by the game.
 _Avoid_: current save, original save
 
-**Edited save**:
-The candidate save written before installation.
-_Avoid_: output save, temp save
-
-**Install**:
-Replacing the live save with the edited save, after backing up the live save.
-_Avoid_: apply, overwrite
+**Save changes**:
+Replacing the live save with the current edits; a backup is created first.
+_Avoid_: install, apply, commit
 
 **Copy appearance + voice**:
 The operation that copies a source hunter's appearance and voice onto a target slot, with an optional rename and optional deletion of the source.
@@ -99,7 +95,7 @@ _Avoid_: clear slot, erase character, remove source
 ## Backups and restore
 
 **Backup**:
-A full copy of the live save kept before an install or restore.
+A full copy of the live save kept before a save or restore.
 _Avoid_: snapshot, save copy
 
 **Backup folder**:

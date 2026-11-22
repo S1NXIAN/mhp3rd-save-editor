@@ -860,15 +860,6 @@ def copy_appearance_and_voice(payload: bytes) -> bytes:
     return updated
 
 
-def write_edited(save_path: Path, payload: bytes) -> Path:
-    raw = encrypt_save(payload)
-    if decrypt_save(raw) != payload:
-        raise RuntimeError("verification failed; nothing was written")
-    output = save_path.with_name(save_path.name + ".edited")
-    output.write_bytes(raw)
-    return output
-
-
 def create_backup(save_path: Path, backup_dir: Path = BACKUP_DIR) -> Path:
     backup_dir = Path(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -885,23 +876,25 @@ def create_backup(save_path: Path, backup_dir: Path = BACKUP_DIR) -> Path:
     return backup
 
 
-def install_edited(
+def save_payload(
     save_path: Path,
-    edited_path: Path,
     payload: bytes,
     backup_dir: Path = BACKUP_DIR,
 ) -> Path:
+    raw = encrypt_save(payload)
+    if decrypt_save(raw) != payload:
+        raise RuntimeError("encrypted save did not verify")
     backup = create_backup(save_path, backup_dir)
     temporary = save_path.with_name(save_path.name + ".tmp")
     try:
-        shutil.copyfile(edited_path, temporary)
+        temporary.write_bytes(raw)
         os.replace(temporary, save_path)
     finally:
         with contextlib.suppress(OSError):
             temporary.unlink()
     try:
         if decrypt_save(save_path.read_bytes()) != payload:
-            raise RuntimeError("installed save did not verify")
+            raise RuntimeError("saved file did not verify")
     except Exception:
         shutil.copy2(backup, save_path)
         raise
@@ -1017,34 +1010,15 @@ def require_ppsspp_closed() -> bool:
 def save_changes(save_path: Path, payload: bytes) -> bool:
     print()
     print(style("Save changes", BOLD, CYAN))
-    try:
-        edited = write_edited(save_path, payload)
-    except Exception as exc:
-        error(str(exc))
-        return False
-
-    success(f"Wrote {display_path(edited)}")
-    print()
-    print(style("Close PPSSPP before installing.", BOLD, YELLOW))
-    answer = input(
-        style("Install into the game folder? ", BOLD)
-        + style("[y/N]: ", GRAY)
-    ).strip().lower()
-    if answer not in ("y", "yes"):
-        print(style("Not installed. The .edited file is ready to copy.", GRAY))
-        return True
-
     if not require_ppsspp_closed():
         return False
-
     try:
-        backup = install_edited(save_path, edited, payload)
+        backup = save_payload(save_path, payload)
     except Exception as exc:
         error(str(exc))
-        print(style("The original save was left in place or restored.", GRAY))
+        print(style("The live save was left in place or restored.", GRAY))
         return False
-
-    success("Installed.")
+    success("Saved.")
     print(style("  Backup: ", GRAY) + style(display_path(backup), BOLD))
     return True
 
@@ -1382,11 +1356,8 @@ def _test_backup_restore(original: bytes) -> None:
         save_file.write_bytes(encrypt_save(original))
 
         edited_payload = apply_edits(original, 1, name="BackupTest")
-        edited_file = temp / "MHP3RD.BIN.edited"
-        edited_file.write_bytes(encrypt_save(edited_payload))
-
-        backup = install_edited(
-            save_file, edited_file, edited_payload, backup_dir=backup_dir
+        backup = save_payload(
+            save_file, edited_payload, backup_dir=backup_dir
         )
         assert backup.parent == backup_dir
         assert decrypt_save(save_file.read_bytes()) == edited_payload

@@ -81,14 +81,14 @@ source slot becomes all zeroes, exactly like an unused slot.
 
 ## Safety
 
-- The original save is never modified until you answer **yes** to "Install".
-- The first save writes `MHP3RD.BIN.edited` next to the original.
-- Every install first creates a full backup. See Backups and restore for the
+- Choosing `s` saves immediately; there is no second confirmation.
+- Every save first creates a full backup. See Backups and restore for the
   folder and retention.
-- The edited save is decrypted and checked again before it is installed.
-  If that check fails, the backup is restored.
-- Close PPSSPP before installing. The editor refuses to install or restore
-  while it is running.
+- The save is encrypted and checked before it replaces the live save. If the
+  post-write check fails, the backup is restored.
+- Close PPSSPP before saving. The editor refuses to save or restore while it
+  is running.
+- `q` quits without saving; it confirms only when there are unsaved changes.
 - Still make your own copy of the save before using this, and test in PPSSPP
   before copying it to a real PSP.
 
