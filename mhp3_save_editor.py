@@ -15,7 +15,9 @@ The save format offsets and cipher tables are ported from erickdevit/savemud
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
+import io
 import os
 import re
 import secrets
@@ -577,7 +579,7 @@ def print_note() -> None:
 
 def print_menu(payload: bytes, dirty: bool) -> None:
     print()
-    print(style("Characters", BOLD))
+    print(style("Character slots", BOLD))
     for slot in (1, 2, 3):
         name = read_name(payload, slot)
         label = f"Edit slot {slot}"
@@ -777,7 +779,7 @@ def edit_slot(payload: bytes, slot: int) -> bytes:
         return payload
 
 
-def copy_look(payload: bytes) -> bytes:
+def copy_appearance_and_voice(payload: bytes) -> bytes:
     print()
     print(style("Copy appearance + voice", BOLD, CYAN))
     print(style(H * RULE_WIDTH, GRAY))
@@ -891,8 +893,12 @@ def install_edited(
 ) -> Path:
     backup = create_backup(save_path, backup_dir)
     temporary = save_path.with_name(save_path.name + ".tmp")
-    shutil.copyfile(edited_path, temporary)
-    os.replace(temporary, save_path)
+    try:
+        shutil.copyfile(edited_path, temporary)
+        os.replace(temporary, save_path)
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
     try:
         if decrypt_save(save_path.read_bytes()) != payload:
             raise RuntimeError("installed save did not verify")
@@ -902,25 +908,36 @@ def install_edited(
     return backup
 
 
-def list_backups(backup_dir: Path = BACKUP_DIR) -> list[Path]:
+def backup_sort_key(path: Path) -> tuple[str, str]:
+    match = re.match(r".+\.bak-(\d{8})-(\d{6})", path.name)
+    if match:
+        return (match.group(1) + match.group(2), path.name)
+    return (
+        datetime.fromtimestamp(
+            path.stat().st_mtime
+        ).strftime("%Y%m%d%H%M%S"),
+        path.name,
+    )
+
+
+def list_backups(
+    save_name: str = "MHP3RD.BIN", backup_dir: Path = BACKUP_DIR
+) -> list[Path]:
     backup_dir = Path(backup_dir)
     if not backup_dir.is_dir():
         return []
+    prefix = f"{save_name}.bak-"
     paths = [
         path
         for path in backup_dir.iterdir()
-        if path.is_file() and path.name.startswith("MHP3RD.BIN.bak-")
+        if path.is_file() and path.name.startswith(prefix)
     ]
-    return sorted(
-        paths,
-        key=lambda path: (path.stat().st_mtime, path.name),
-        reverse=True,
-    )
+    return sorted(paths, key=backup_sort_key, reverse=True)
 
 
 def backup_label(path: Path) -> str:
     match = re.match(
-        r"MHP3RD\.BIN\.bak-(\d{8})-(\d{6})(.*)", path.name
+        r".+\.bak-(\d{8})-(\d{6})(.*)", path.name
     )
     if match:
         try:
@@ -947,8 +964,12 @@ def restore_backup(
     payload = decrypt_save(backup_path.read_bytes())
     pre_restore = create_backup(save_path, backup_dir)
     temporary = save_path.with_name(save_path.name + ".restore-tmp")
-    shutil.copyfile(backup_path, temporary)
-    os.replace(temporary, save_path)
+    try:
+        shutil.copyfile(backup_path, temporary)
+        os.replace(temporary, save_path)
+    finally:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
     try:
         if decrypt_save(save_path.read_bytes()) != payload:
             raise RuntimeError("restored save did not verify")
@@ -956,6 +977,41 @@ def restore_backup(
         shutil.copy2(pre_restore, save_path)
         raise
     return payload, pre_restore
+
+
+def ppsspp_running() -> bool:
+    proc = Path("/proc")
+    if proc.is_dir():
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                name = (entry / "comm").read_text().strip().lower()
+            except OSError:
+                continue
+            if name in {"ppssppsdl", "ppsspp", "ppssppqt"}:
+                return True
+        return False
+
+    for name in ("PPSSPPSDL", "ppsspp", "PPSSPPQt"):
+        try:
+            result = subprocess.run(
+                ["pgrep", "-x", name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            continue
+        if result.returncode == 0:
+            return True
+    return False
+
+
+def require_ppsspp_closed() -> bool:
+    if ppsspp_running():
+        error("PPSSPP is running. Close it completely, then retry.")
+        return False
+    return True
 
 
 def save_changes(save_path: Path, payload: bytes) -> bool:
@@ -977,6 +1033,9 @@ def save_changes(save_path: Path, payload: bytes) -> bool:
     if answer not in ("y", "yes"):
         print(style("Not installed. The .edited file is ready to copy.", GRAY))
         return True
+
+    if not require_ppsspp_closed():
+        return False
 
     try:
         backup = install_edited(save_path, edited, payload)
@@ -1009,10 +1068,23 @@ def more_actions_menu() -> str | None:
         print(style("Choose c, r or b.", GRAY))
 
 
+def backup_index_for_page(
+    choice: str, page: int, page_size: int, count: int
+) -> int | None:
+    if not choice.isdigit():
+        return None
+    index = int(choice) - 1
+    start = page * page_size
+    end = min(start + page_size, count)
+    if start <= index < end:
+        return index
+    return None
+
+
 def restore_picker(
     save_path: Path, backup_dir: Path = BACKUP_DIR
 ) -> bytes | None:
-    backups = list_backups(backup_dir)
+    backups = list_backups(save_path.name, backup_dir)
     if not backups:
         print()
         print(style("Restore a backup", BOLD, CYAN))
@@ -1052,8 +1124,8 @@ def restore_picker(
         if not choice.isdigit():
             print(style("Choose a number, n/p, or b.", GRAY))
             continue
-        index = int(choice) - 1
-        if not 0 <= index < len(backups):
+        index = backup_index_for_page(choice, page, page_size, len(backups))
+        if index is None:
             print(style("That backup number is not on this page.", GRAY))
             continue
 
@@ -1076,6 +1148,8 @@ def restore_picker(
             + style("[y/N]: ", GRAY)
         ).strip().lower()
         if answer in ("y", "yes"):
+            if not require_ppsspp_closed():
+                continue
             try:
                 restored, pre_restore = restore_backup(
                     save_path, selected, backup_dir
@@ -1116,7 +1190,7 @@ def interactive_loop(save_path: Path, payload: bytes) -> None:
         elif choice == "m":
             action = more_actions_menu()
             if action == "copy":
-                updated = copy_look(payload)
+                updated = copy_appearance_and_voice(payload)
                 if updated != payload:
                     payload = updated
                     dirty = payload != baseline
@@ -1155,30 +1229,39 @@ def interactive_loop(save_path: Path, payload: bytes) -> None:
 # Self-test
 # ---------------------------------------------------------------------------
 
-def run_selftest() -> int:
-    # AES-128-CBC known-answer test (zero IV).
+def _sample_payload() -> bytes:
+    payload = bytearray(os.urandom(INNER_SIZE))
+    encoded = "Tester".encode("utf-16-le")
+    payload[CHAR_BASE:CHAR_BASE + NAME_BYTES] = (
+        encoded + b"\x00" * (NAME_BYTES - len(encoded))
+    )
+    payload[CHAR_BASE + APPEARANCE_REL:CHAR_BASE + APPEARANCE_REL + 4] = (
+        bytes([1, 5, 3, 9])
+    )
+    guild = "Guild1".encode("utf-16-le")
+    payload[
+        CHAR_BASE + GUILD_CARD_REL:
+        CHAR_BASE + GUILD_CARD_REL + NAME_BYTES
+    ] = guild + b"\x00" * (NAME_BYTES - len(guild))
+    for slot in (2, 3):
+        offset = slot_base(slot) + GUILD_CARD_REL
+        payload[offset:offset + NAME_BYTES] = b"\x00" * NAME_BYTES
+    return bytes(payload)
+
+
+def _test_aes_vector() -> None:
     key = bytes(range(16))
     plain = bytes.fromhex("00112233445566778899aabbccddeeff")
     cipher = bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a")
     assert _aes(plain, key, False) == cipher
     assert _aes(cipher, key, True) == plain
 
-    # The two substitution tables must be inverses.
+
+def _test_tables_inverse() -> None:
     assert all(INNER_ENCODE[INNER_DECODE[i]] == i for i in range(256))
 
-    payload = bytearray(os.urandom(INNER_SIZE))
-    encoded = "Tester".encode("utf-16-le")
-    payload[CHAR_BASE:CHAR_BASE + NAME_BYTES] = encoded + b"\x00" * (NAME_BYTES - len(encoded))
-    payload[CHAR_BASE + APPEARANCE_REL:CHAR_BASE + APPEARANCE_REL + 4] = bytes([1, 5, 3, 9])
-    guild = "Guild1".encode("utf-16-le")
-    payload[CHAR_BASE + GUILD_CARD_REL:CHAR_BASE + GUILD_CARD_REL + NAME_BYTES] = (
-        guild + b"\x00" * (NAME_BYTES - len(guild))
-    )
-    for slot in (2, 3):
-        offset = slot_base(slot) + GUILD_CARD_REL
-        payload[offset:offset + NAME_BYTES] = b"\x00" * NAME_BYTES
-    original = bytes(payload)
 
+def _test_cipher_roundtrip(original: bytes) -> None:
     raw = encrypt_save(original)
     assert len(raw) == EXPECTED_SIZE
     assert decrypt_save(raw) == original
@@ -1188,6 +1271,8 @@ def run_selftest() -> int:
         "gender": 1, "voice": 5, "face": 9,
     }
 
+
+def _test_edit_fields(original: bytes) -> None:
     edited = apply_edits(
         original, 1, name="Edited",
         gender=0, voice=0, face=0, skin=(255, 0, 0),
@@ -1202,12 +1287,19 @@ def run_selftest() -> int:
     assert hex_to_rgb("#112233") == (0x11, 0x22, 0x33)
     assert decrypt_save(encrypt_save(edited)) == edited
 
-    # Changing appearance only must not rewrite the name or skin tone.
     appearance_only = apply_edits(original, 1, gender=0)
     assert read_guild_name(appearance_only, 1) == "Guild1"
     assert read_skin(appearance_only, 1) == read_skin(original, 1)
 
-    # Copy the whole appearance block + voice from slot 2 to slot 1.
+    try:
+        apply_edits(original, 1, skin=(256, 0, 0))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid skin was accepted")
+
+
+def _test_copy(original: bytes) -> None:
     with_source = apply_edits(
         original, 2, name="Second", gender=0, voice=10, face=8
     )
@@ -1226,6 +1318,7 @@ def run_selftest() -> int:
         ]
     )
     assert read_skin(copied, 1) == read_skin(with_source, 2)
+
     renamed = apply_edits(copied, 1, name="Cloned")
     assert read_name(renamed, 1) == "Cloned"
     assert read_guild_name(renamed, 1) == "Cloned"
@@ -1244,14 +1337,9 @@ def run_selftest() -> int:
         else:
             raise AssertionError("invalid copy was accepted")
 
-    try:
-        apply_edits(original, 1, skin=(256, 0, 0))
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("invalid skin was accepted")
 
-    # Deleting a source slot must match the game's all-zero empty slot.
+def _test_delete(original: bytes) -> None:
+    with_source = apply_edits(original, 2, name="Second")
     deleted = delete_slot(with_source, 2)
     assert read_name(deleted, 2) == ""
     assert read_guild_name(deleted, 2) == ""
@@ -1264,19 +1352,20 @@ def run_selftest() -> int:
     else:
         raise AssertionError("empty slot deletion was accepted")
 
+
+def _test_names(original: bytes) -> None:
     for slot in (2, 3):
         changed = apply_edits(original, slot, name=f"Slot{slot}")
         assert read_name(changed, slot) == f"Slot{slot}"
         assert read_guild_name(changed, slot) == f"Slot{slot}"
 
-    # Full-width ASCII is normalized for display but not rewritten unless asked.
     full_width = bytearray(original)
     full_width[CHAR_BASE:CHAR_BASE + NAME_BYTES] = (
-        "\uff50iroca".encode("utf-16-le") + b"\x00" * (NAME_BYTES - 12)
+        "\uff50iroca".encode("utf-16-le")
+        + b"\x00" * (NAME_BYTES - 12)
     )
     assert read_name(bytes(full_width), 1) == "piroca"
 
-    # The game's display limit is 6 full-width or 12 half-width characters.
     try:
         apply_edits(original, 1, name="\u3042" * 7)
     except ValueError:
@@ -1284,7 +1373,8 @@ def run_selftest() -> int:
     else:
         raise AssertionError("wide name was accepted")
 
-    # Backup + restore through the dedicated folder.
+
+def _test_backup_restore(original: bytes) -> None:
     with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
         temp = Path(temp_dir)
         backup_dir = temp / "backups"
@@ -1310,18 +1400,76 @@ def run_selftest() -> int:
         assert pre_restore.parent == backup_dir
         assert decrypt_save(pre_restore.read_bytes()) == edited_payload
 
-        backups = list_backups(backup_dir)
+        backups = list_backups("MHP3RD.BIN", backup_dir)
         assert len(backups) == 2
         assert all(path.is_file() for path in backups)
 
-    print(style("selftest: PASS", BOLD, GREEN))
-    print(
-        style(
-            "  AES-128-CBC, inner/outer round-trip, slots 1-3, "
-            "copy/delete, skin, backup/restore, guild card, name limits",
-            GRAY,
-        )
+
+def _test_backup_listing() -> None:
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+        backup_dir = Path(temp_dir)
+        (backup_dir / "OTHER.BIN.bak-20260101-000000").write_bytes(b"x")
+        (backup_dir / "MHP3RD.BIN.bak-20260101-000000").write_bytes(b"x")
+        (backup_dir / "MHP3RD.BIN.bak-20250101-000000").write_bytes(b"x")
+        assert len(list_backups("OTHER.BIN", backup_dir)) == 1
+        assert [
+            path.name for path in list_backups("MHP3RD.BIN", backup_dir)
+        ] == [
+            "MHP3RD.BIN.bak-20260101-000000",
+            "MHP3RD.BIN.bak-20250101-000000",
+        ]
+        assert list_backups("MISSING.BIN", backup_dir) == []
+
+
+def _test_picker_page() -> None:
+    assert backup_index_for_page("1", 0, 10, 12) == 0
+    assert backup_index_for_page("10", 0, 10, 12) == 9
+    assert backup_index_for_page("11", 0, 10, 12) is None
+    assert backup_index_for_page("11", 1, 10, 12) == 10
+    assert backup_index_for_page("12", 1, 10, 12) == 11
+    assert backup_index_for_page("1", 1, 10, 12) is None
+    assert backup_index_for_page("x", 0, 10, 12) is None
+
+
+def _test_ppsspp_guard() -> None:
+    original = ppsspp_running
+    try:
+        globals()["ppsspp_running"] = lambda: True
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert require_ppsspp_closed() is False
+        globals()["ppsspp_running"] = lambda: False
+        assert require_ppsspp_closed() is True
+    finally:
+        globals()["ppsspp_running"] = original
+
+
+def _test_ppsspp_probe() -> None:
+    assert isinstance(ppsspp_running(), bool)
+
+
+def run_selftest() -> int:
+    original = _sample_payload()
+    tests = (
+        ("AES-128-CBC vector", _test_aes_vector),
+        ("substitution tables", _test_tables_inverse),
+        (
+            "inner/outer cipher round-trip",
+            lambda: _test_cipher_roundtrip(original),
+        ),
+        ("fields, skin and limits", lambda: _test_edit_fields(original)),
+        ("copy appearance + voice", lambda: _test_copy(original)),
+        ("delete source slot", lambda: _test_delete(original)),
+        ("names and slot limits", lambda: _test_names(original)),
+        ("backup and restore", lambda: _test_backup_restore(original)),
+        ("backup list filter and order", _test_backup_listing),
+        ("restore picker pagination", _test_picker_page),
+        ("PPSSPP guard", _test_ppsspp_guard),
+        ("PPSSPP process probe", _test_ppsspp_probe),
     )
+    for name, test in tests:
+        test()
+        print(style(f"  {CHECK} {name}", GREEN))
+    print(style("selftest: PASS", BOLD, GREEN))
     return 0
 
 

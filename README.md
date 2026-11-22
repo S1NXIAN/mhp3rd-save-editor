@@ -38,16 +38,17 @@ Show the current characters without writing anything:
 python3 mhp3_save_editor.py --check
 ```
 
-Check the crypto without touching a save:
+Check syntax and run the self-tests without touching a save:
 
 ```bash
+python3 -m py_compile mhp3_save_editor.py
 python3 mhp3_save_editor.py --selftest
 ```
 
 ## Values
 
-The editor asks for the in-game numbers, starting at 1. It converts them to
-the 0-based values stored in the save:
+Voice and face use the in-game numbers, starting at 1. Skin uses a hex colour.
+The editor converts them to the values stored in the save:
 
 | Field | Input | Stored |
 |---|---|---|
@@ -63,32 +64,31 @@ Names are stored as UTF-16LE. The game allows 6 full-width or 12 half-width
 characters; the editor enforces that limit. Empty slots are dimmed and cannot
 be edited.
 
-The save keeps a separate guild card copy of the hunter name. The editor
-updates both copies whenever you change the name, so the guild card stays in
-sync.
+The save keeps a separate guild card copy of the hunter name. Changing the
+hunter name updates both copies; editing only appearance does not repair an
+existing mismatch.
 
-## Copying a look
+## Copying appearance + voice
 
 From the main menu press `m`, then `c`, choose the target and source slots,
 and optionally type a new name. This copies the source's full appearance and
-voice. The target keeps its items, equipment and progress; only the look and
-name change.
+voice. The target keeps its items, equipment and progress; only appearance,
+voice and name change.
 
-After copying, it offers to delete the source slot so the look is not left
-duplicated. This deletion is optional and defaults to No. The source slot
-becomes all zeroes, exactly like an unused slot.
+After copying, it offers to delete the source slot so the appearance and voice
+are not left duplicated. This deletion is optional and defaults to No. The
+source slot becomes all zeroes, exactly like an unused slot.
 
 ## Safety
 
 - The original save is never modified until you answer **yes** to "Install".
 - The first save writes `MHP3RD.BIN.edited` next to the original.
-- Every install first creates a full backup in
-  `~/.config/ppsspp/PSP/SAVEDATA/backups/mhp3rd/`. Backups are never pruned;
-  delete them manually when you no longer need them.
+- Every install first creates a full backup. See Backups and restore for the
+  folder and retention.
 - The edited save is decrypted and checked again before it is installed.
   If that check fails, the backup is restored.
-- Close PPSSPP before installing, otherwise the emulator may overwrite the
-  edited save when it exits.
+- Close PPSSPP before installing. The editor refuses to install or restore
+  while it is running.
 - Still make your own copy of the save before using this, and test in PPSSPP
   before copying it to a real PSP.
 
@@ -98,11 +98,13 @@ behaviour has not been verified.
 
 ## Backups and restore
 
-All backups live in `~/.config/ppsspp/PSP/SAVEDATA/backups/mhp3rd/`.
-From the main menu choose `m` → `r` to open the restore picker. It lists
-backups newest first, ten per page. Selecting one shows a preview and asks for
-confirmation. Close PPSSPP before restoring. The current save is backed up
-before the restore, so a restore can itself be undone.
+All backups live in `~/.config/ppsspp/PSP/SAVEDATA/backups/mhp3rd/`. Backups
+are never pruned; delete them manually when you no longer need them. From the
+main menu choose `m` → `r` to open the restore picker. It lists backups newest
+first, ten per page. Selecting one shows a preview and asks for confirmation.
+Close PPSSPP before restoring; the editor refuses to restore while it is
+running. The current save is backed up before the restore, so a restore can
+itself be undone.
 
 ## Format notes
 
